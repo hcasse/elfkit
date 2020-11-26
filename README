@@ -2,3 +2,10 @@
 To get the dynamic documentation:
 $ python3 -m pydoc -p 1234
 $ xdg-open http://localhost:1234
+
+
+
+
+git remote add origin https://github.com/hcasse/elfkit.git
+git branch -M main
+git push -u origin main
