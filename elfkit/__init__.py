@@ -30,10 +30,22 @@
 #	along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
+"""ElfKit is a Python library to manage smart user interface. By smart,
+this library intents to easily generate quick and responsive user
+interface from the application described by its semantics: data items
+and actions."""
+
+
 from elfkit.base import *
 import elfkit.gtk as gtk
 
-class Application(Group):
+
+def default_ui():
+	"""Get the default user interface."""
+	return gtk.DRIVER
+
+
+class Application(Entity, Context):
 	"""An application identify a program to the current OS and provides
 	common facilities to manage the different aspects of an application.
 	It provides a link with a specific UI library.
@@ -44,19 +56,19 @@ class Application(Group):
 	
 	def __init__(self, name, version = "", copyright = "", contact = "",
 	website = "", description = "", **args):
-		Group.__init__(self, name, **args)
+		Entity.__init__(self, label=name, **args)
+		Context.__init__(self, name, **args)
 		self.name = name
 		self.version = version
 		self.copyright = copyright
 		self.contact = contact
 		self.website = website
 		self.description = description
-		self.ui = gtk.UI(self)
-		self.quit_action = self.ui.quit_action
+		self.quit_action = default_ui().quit_action
 
-	def make_window(self):
+	def make_window(self, pane = None):
 		"""Build and return a window for the current UI system."""
-		return self.ui.make_window()
+		return default_ui().open(self, pane)
 		
 	def setup(self):
 		"""Called to let the application to set up its UI before the
@@ -68,10 +80,14 @@ class Application(Group):
 		required from the user. Default does nothing."""
 		return True
 	
-	def run(self):
+	def run(self, pane = None):
 		"""Run the main loop of the application. The behaviour of this
-		function depends a lot on the underlying UI implementation)."""
+		function depends a lot on the underlying UI implementation).
+		If a pane is given, it is displayed."""
 		self.setup()
-		self.ui.run()
+		if pane != None:
+			w = self.make_window(pane)
+			w.open()
+		default_ui().run()
 		self.cleanup()
-	
+

@@ -1,0 +1,4 @@
+
+To get the dynamic documentation:
+$ python3 -m pydoc -p 1234
+$ xdg-open http://localhost:1234

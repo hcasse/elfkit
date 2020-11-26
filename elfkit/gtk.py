@@ -30,6 +30,22 @@
 #	along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
+"""GTK implementation of the common user interface.
+
+This module should not be called by usual applications.
+"""
+
+# https://lazka.github.io/pgi-docs/#Gtk-3.0/classes/Button.html
+#
+# gtk.icon_size_lookup(icon_size)
+#	https://developer.gnome.org/pygtk/stable/class-gtkiconsource.html#function-gtk--icon-size-lookup
+#
+# stock identifiers
+#	https://developer.gnome.org/pygtk/stable/gtk-stock-items.html
+
+
+import inspect
+import os.path
 import sys
 
 import gi
@@ -37,10 +53,36 @@ gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
 from gi.repository import Gdk
 from gi.repository import GdkPixbuf
+from gi.repository import GLib
 import cairo
 
 import elfkit.base as base
 import elfkit.ui as ui
+from elfkit import view
+
+STOCK_MAP = {
+	ui.QUIT_ICON:		Gtk.STOCK_QUIT,
+	ui.ABOUT_ICON:		Gtk.STOCK_ABOUT,
+	ui.ADD_ICON:		Gtk.STOCK_ADD,
+	ui.APPLY_ICON:		Gtk.STOCK_APPLY,
+	ui.CANCEL_ICON:		Gtk.STOCK_CANCEL,
+	ui.CLEAR_ICON:		Gtk.STOCK_CLEAR,
+	ui.CLOSE_ICON:		Gtk.STOCK_CLOSE,
+
+	ui.BOLD_ICON:		Gtk.STOCK_BOLD,
+
+	ui.CDROM_ICON:		Gtk.STOCK_CDROM
+}
+
+ICON_SIZE_MAP = {
+	ui.MENU_ICON_SIZE:			Gtk.IconSize.MENU,
+	ui.SMALL_TOOLBAR_ICON_SIZE:	Gtk.IconSize.SMALL_TOOLBAR,
+	ui.LARGE_TOOLBAR_ICON_SIZE:	Gtk.IconSize.LARGE_TOOLBAR,
+	ui.BUTTON_ICON_SIZE:		Gtk.IconSize.BUTTON,
+	ui.DND_ICON_SIZE:			Gtk.IconSize.DND,
+	ui.DIALOG_ICON_SIZE:		Gtk.IconSize.DIALOG
+}
+
 
 def error(msg):
 	sys.stderr.write("ERROR: %s\n" % msg)
@@ -263,14 +305,135 @@ def build_form(vars, win):
 	return grid
 
 
-class Window(ui.Window, base.Console):
+class Widget:
 	
-	def __init__(self, u):
-		ui.Window.__init__(self, u)
-		self.ui = u
+	def get_widget(self):
+		"""Get the corresponding GTK widget."""
+		return None
+
+
+class DrawingPort:
+
+	def get_rgb(self, r, g, b):
+		if isinstance(r, int):
+			return (r / 255., g / 255., b / 255.)
+		else:
+			return (r, g, b)
+	
+	def set_color(self, color):
+		self.color = color
+	
+	def box(self, x, y, w, h):
+		r, g, b = self.color
+		cr.set_source_rgb(r, g, b)
+		cr.new_path()
+		rectangle(x, y, w, h)
+		cr.stroke()
+	
+	def fill_box(self, x, y, w, h):
+		r, g, b = self.color
+		cr.set_source_rgb(r, g, b)
+		cr.new_path()
+		rectangle(x, y, w, h)
+		cr.fill()
+	
+	def draw_image(self, image, x, y):
+		Gdk.cairo_set_source_pixbuf(cr, image, x, y)
+		cr.paint()
+
+
+class Canvas(ui.Canvas, Widget):
+	"""A canvas is a UI interface letting the user to draw different shapes,
+	images, text, etc."""
+	
+	def __init__(self, painter):
+		ui.Canvas.__init__(self)
+		Widget.__init__(self)
+		self.painter = painter
+		self.color = (1., 1., 1.)
+		self.area = Gtk.DrawingArea()
+		self.scroll = Gtk.ScrolledWindow(None, None)
+		self.scroll.add(self.area)
+		self.scroll.set_min_content_width(50)
+		self.scroll.set_min_content_height(50)
+		self.area.connect("draw", self.do_draw)
+		self.w = 0
+		self.h = 0
+		self.port = DrawingPort()
+	
+	def get_widget(self):
+		return self.scroll
+
+	def set_size(self, w, h):
+		self.w = w
+		self.h = h
+		self.area.set_size_request(self.w, self.h)
+
+	def do_draw(self, w, cr):
+		(todo, rect) = Gdk.cairo_get_clip_rectangle(cr)
+		if not todo:
+			return
+		self.port.cr = cr
+		self.painter.paint(self.port, rect.x, rect.y, rect.width, rect.height)
+
+
+class ActionButton(view.Observer):
+
+	def __init__(self, action, view):
+		self.action = action
+		self.button = None
+		self.frame = None
+		self.view = view
+		self.view.add_observer(self)
+
+	def make(self, frame):
+		if self.button == None:
+			self.frame = frame
+			ctx = frame.get_context(self.action)
+			self.button = Gtk.Button(label = self.action.get_label())
+			help = self.action.get_help()
+			if help != None:
+				self.button.set_tooltip_text(help)
+			icon = self.action.get_icon()
+			if icon != None:
+				image = frame.get_driver().get_icon(icon, ctx, ui.BUTTON_ICON_SIZE)
+				if image != None:
+					self.button.set_image(image)
+			self.button.connect("clicked", self.on_click)
+			self.on_update(None)
+		return self.button
+
+	def on_show(self, view):
+		self.action.observe(self)
+		self.button.on_update(None)
+
+	def on_hide(self, view):
+		self.action.ignore(self)
+
+	def on_update(self, var):
+		self.button.set_sensitive(self.action.check())
+
+	def on_click(self, button):
+		self.action.apply(self.frame.get_context(self.action))
+
+	
+def build_view(frame, box, _view):
+	""""Build the given view in the given box owned by the given frame."""
+
+	if isinstance(_view, view.Switch):
+		for action in _view.get_actions():
+			button = ActionButton(action, _view)
+			box.pack_start(button.make(frame), False, False, 0)
+			
+
+class Frame(ui.Frame, base.Monitor):
+	
+	def __init__(self, app, ui_, view = None):
+		ui.Frame.__init__(self, app, ui_)
 		self.win = None
-		self.title = u.app.label
+		self.title = app.get_label()
 		self.menu = []
+		self.view = view
 
 	def set_title(self, title):
 		self.title = title
@@ -282,9 +445,9 @@ class Window(ui.Window, base.Console):
 
 	def init(self):
 
-		# build the window
+		# build the GTK window
 		self.win = Gtk.Window()
-		self.win.connect("destroy", self.ui.quit)
+		self.win.connect("destroy", self.driver.quit)
 		self.win.set_title(self.title)
 		self.win.set_resizable(True)
 		box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -295,6 +458,8 @@ class Window(ui.Window, base.Console):
 			box.pack_start(menubar, False, False, 0)
 
 		# set the main content
+		if self.view != None:
+			build_view(self, box, self.view)
 		self.win.add(box)
 		box.show_all()
 		
@@ -381,34 +546,75 @@ class Window(ui.Window, base.Console):
 				vars[i].set(avars[i].get())
 			return True
 
-
-class UI(ui.UI):
+	def make_image(self, path):
+		"""Obtain an image from the given path."""
+		return self.ui.get_icon(path)
 	
-	def __init__(self, app):
-		ui.UI.__init__(self, app)
+	def make_canvas(self, painter, **args):
+		"""Build a canvas for the current window."""
+		return Canvas(painter, **args)
+
+	def set_content(self, widget):
+		"""Set the content of the window."""
+		self.content = widget
+
+
+class Driver(ui.Driver):
+	"""UI interface for GTK implementation."""
+	
+	def __init__(self):
+		ui.Driver.__init__(self)
 		self.quit_action = \
 			base.Action(self.quit, label="Quit", icon=ui.QUIT_ICON, help="Leave the application.")
 		self.icons = {
 			ui.QUIT_ICON: Gtk.STOCK_QUIT
 		}
+		self.image_paths = [os.path.dirname(inspect.getmodule(self).__file__)]
 
-	def make_window(self, **args):
-		return Window(self, **args)
+	def open(self, app, pane = None, **args):
+		return Frame(app, self, pane, **args)
 	
 	def run(self):
 		Gtk.main()
 
 	def quit(self, con):
-		if self.app.cleanup():
-			Gtk.main_quit()
+		Gtk.main_quit()
 
-	def get_icon(self, name):
+	def get_icon(self, name, con = None, size = None):
 		try:
-			return self.icons[name]
+			return self.icons[(name, size)]
 		except KeyError:
-			return None
+			image = None
+
+			# stock icon
+			if isinstance(name, int):
+				try:
+					image = Gtk.Image.new_from_stock(STOCK_MAP[name], ICON_SIZE_MAP[size])
+				except KeyError:
+					pass
+
+			# local icon
+			elif name.startswith("local:"):
+				if con != None:
+					path = os.path.join(con.get_path(), name[6:])
+					image = Gtk.Image.new_from_file(path)
+
+			# global icon
+			else:
+				for p in self.image_paths:
+					path = os.path.join(p, name)
+					if os.path.exists(p):
+						image = Gtk.Image.new_from_file(path)
+						break
+
+			# record it
+			if image != None:
+				self.icons[(name, size)] = image
+			return image
 
 	def get_console(self):
 		return self
 
-		
+# implementation of the Gtk UI
+DRIVER = Driver()
+

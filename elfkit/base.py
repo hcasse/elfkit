@@ -36,10 +36,12 @@ NO_TYPE = 0
 STANDARD = 1
 ENUM = 2
 RANGE = 3
+RECORD = 4
+COLLECT = 5
 
 
-class Console:
-	"""A console is in charge of implementing dialog with the human user
+class Monitor:
+	"""A monitor is in charge of implementing dialog with the human user
 	in the better way according to the current UI."""
 	
 	def info(self, msg):
@@ -119,8 +121,26 @@ class Console:
 					else:
 						sys.stdout.write("Please, write a number.")
 
-TEXT_CONSOLE = Console()
+TEXT_MONITOR = Monitor()
+
+
+class Context:
+	"""A context represents the aggregation of diffrerent resources
+	facilities encompassing, but not limited to, tranlations, configuration.
+	Common groupes includes application, plug-ins and libraries."""
 	
+	def __init__(self, name, path = None):
+		self.name = name
+		self.path = path
+
+	def get_name(self):
+		"""Get the name of the context."""
+		return self.name
+
+	def get_path(self):
+		""""If any, the directory path of the context ressources."""
+		return self.path
+
 
 class Subject:
 	"""This is the base of objects supporting observations.
@@ -146,27 +166,58 @@ class Subject:
 				fun(obs)
 
 
+class EntityObserver:
+	"""Base class to be implemented for an entity change observer."""
+	
+	def on_change(self, entity):
+		"""Function called when the observed entity is changed."""
+		pass
+
+
 class Entity(Subject):
 	"""An entity represents an object in the UI that is make viewvable
 	to a human user. It is composed of a label (that can be translated),
 	an icon, an help message, etc. In the constructor, the group 
 	corresponds to the logical group that owns this entity."""
 	
-	def __init__(self, label = "", icon = "", help = "", group = None):
+	def __init__(self, label = "", icon = "", help = "", ctx = None):
 		Subject.__init__(self)
 		self.label = label
 		self.icon = icon
 		self.help = help
-		self.group = group
+		self.ctx = ctx
 	
+	def trigger_entity(self):
+		"""Trigger a change in the entity."""
+		self.trigger(EntityObserver, lambda o: o.on_change(self))
+	
+	def set_label(self, label):
+		"""Set the label."""
+		self.label = label
+		self.trigger_entity()
+
+	def set_icon(self, icon):
+		"""Set the icon."""
+		self.icon = icon
+		self.trigger_entity()
+
+	def set_help(self, help):
+		"""Set the help message."""
+		self.help = help
+		self.trigger_entity()
+
+	def set_context(self, ctx):
+		"""Set the help message."""
+		self.ctx = ctx
+		self.trigger_entity()
+
 	def get_label(self):
 		"""Get the possibly translated label of the entity."""
 		return self.label
 
-	def get_icon(self, app):
-		"""Get the icon of the label. The app is the current
-		application."""
-		return None
+	def get_icon(self):
+		"""Get the icon of the label."""
+		return self.icon
 	
 	def get_help(self):
 		"""Get the helper message, possibly translated."""
@@ -178,8 +229,12 @@ class Entity(Subject):
 		v.label = self.label
 		v.icon = self.icon
 		v.help = self.help
-		v.group = self.group
+		v.ctx = self.ctx
 		return v
+
+	def get_context(self):
+		"""Get the context of the entity."""
+		return self.ctx
 
 
 class Type(Entity):
@@ -204,9 +259,22 @@ class Type(Entity):
 		"""Test if the type is a range."""
 		return False
 	
+	def is_record(self):
+		"""Test if the type is a record."""
+		return False
+	
+	def is_collect(self):
+		"""Test if the type is a collection."""
+		return False
+	
 	def get_default(self):
 		"""Get the default value for the current type."""
 		return None
+
+	def as_text(self, val):
+		"""Transform a value of this type into text. Default implementation
+		call str() on the value."""
+		return str(val)
 
 DEFAULT_VALUES = {
 	bool: False,
@@ -256,7 +324,7 @@ class EnumType(Type):
 		return True
 
 	def get_default(self):
-		return self.values[0]
+		return self.values[0].get_value()
 
 
 class RangeType(Type):
@@ -274,26 +342,47 @@ class RangeType(Type):
 		return self.low
 
 
-def get_default(self):
-	return self.low
-
-
-class EntityObserver:
-	"""Base class to be implemented for an entity change observer."""
+class Field(Entity):
+	"""Field of an aggregated type."""
 	
-	def on_change(self, entity):
-		"""Function called when the observed entity is changed."""
-		pass
-
-
-class Group(Entity):
-	"""A group represents the aggregation of diffrerent resources
-	facilities encompassing, but not limited to, tranlations, configuration.
-	Common groupes includes application, plug-ins and libraris."""
-	
-	def __init__(self, name, **args):
+	def __init__(self, name, type, **args):
 		Entity.__init__(self, **args)
 		self.name = name
+		self.type = type
+
+
+class RecordType(Type):
+	"""A type representing a record."""
+	
+	def __init__(self, fields, **args):
+		Type.__init__(self, RECORD, **args)
+		self.fields = fields
+
+	def is_record(self):
+		return True
+	
+	def get_default(self):
+		return { f.name: f.type.get_default() for f in self.fields }
+
+	def as_text(self, val):
+		return "(" + ", ".join([val.type.as_text(val[f.name]) for f in self.fields]) + ")"
+
+
+class CollectType(Type):
+	"""A type representing a collection of values of the same type."""
+	
+	def __init__(self, type, **args):
+		Type.__init__(self, COLLECT, **args)
+		self.type = type
+	
+	def is_collect(self):
+		return True
+	
+	def get_default(self):
+		return []
+
+	def as_text(self, val):
+		return "[" + ", ".join([self.type.as_text(i) for i in val]) + "]"
 
 
 class VarObserver:
@@ -404,6 +493,18 @@ class AbstractAction(Entity, Subject):
 		"""Get the dependencies of the action."""
 		return self.deps
 
+	def observe(self, obs):
+		"""The given observer starts to observe the dependencies
+		of the action."""
+		for dep in self.deps:
+			dep.add_observer(obs)
+
+	def ignore(self, obs):
+		"""The given observer stops to observe the dependencies
+		of the action."""
+		for dep in self.deps:
+			dep.remove_observer(obs)
+
 
 def no_apply(con):
 	"""Empty action."""
@@ -430,4 +531,3 @@ class Action(AbstractAction):
 	
 	def check(self):
 		return self.cfun()
-
