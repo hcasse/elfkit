@@ -56,11 +56,11 @@ class View(base.Entity):
 
 	def show(self):
 		""""Called when the view is about to be displayed."""
-		self.trigger(ViewObserver, lambda obs: obs.onShow(self))
+		self.trigger(Observer, lambda obs: obs.on_show(self))
 
 	def hide(self):
 		""""Called when the view is no more displayed."""
-		self.trigger(ViewObserver, lambda obs: obs.onHide(self))
+		self.trigger(Observer, lambda obs: obs.on_hide(self))
 
 
 class Switch(View):

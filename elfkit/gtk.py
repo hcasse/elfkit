@@ -405,10 +405,10 @@ class ActionButton(view.Observer):
 
 	def on_show(self, view):
 		self.action.observe(self)
-		self.button.on_update(None)
+		self.on_update(None)
 
 	def on_hide(self, view):
-		self.action.ignore(self)
+		self.ignore(self)
 
 	def on_update(self, var):
 		self.button.set_sensitive(self.action.check())
@@ -466,10 +466,14 @@ class Frame(ui.Frame, base.Monitor):
 	def open(self):
 		if self.win == None:
 			self.init()
+		if self.view != None:
+			self.view.show()
 		self.win.show_all()
 
 	def close(self):
 		self.win.hide()
+		if self.view != None:
+			self.view.hide()
 
 	def info(self, msg):
 		dialog = Gtk.MessageDialog(
